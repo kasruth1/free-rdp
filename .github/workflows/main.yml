@@ -11,63 +11,39 @@ jobs:
     steps:
       - name: Configure Core RDP Settings
         run: |
-          # Enable Remote Desktop
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
                              -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
                              -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
                              -Name "SecurityLayer" -Value 0 -Force
-
-          # Remove existing firewall rule
           netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
-          
-          # Allow RDP port 3389
-          netsh advfirewall firewall add rule name="RDP-Tailscale" `
-            dir=in action=allow protocol=TCP localport=3389
-
-          # Restart Remote Desktop service
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
 
       - name: Create RDP User
         run: |
           $password = "Asu112233@"
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          
-          # Create user if not exists
           if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
               New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires -PasswordNeverExpires
               Add-LocalGroupMember -Group "Administrators" -Member "RDP"
               Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
-              Write-Host "User RDP created successfully"
           } else {
-              # Update password if user exists
               Set-LocalUser -Name "RDP" -Password $securePass
-              Write-Host "User RDP password updated"
           }
 
       - name: Install Tailscale
         run: |
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $installerPath = "$env:TEMP\tailscale.msi"
-          
-          Write-Host "Downloading Tailscale..."
           Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          
-          Write-Host "Installing Tailscale..."
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item $installerPath -Force
-          
-          Write-Host "Tailscale installed successfully"
 
       - name: Establish Tailscale Connection
         run: |
-          Write-Host "Connecting to Tailscale..."
-          
-          # Bring up Tailscale
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-rdp-$env:GITHUB_RUN_ID
-          
-          # Wait for Tailscale IP
           $tsIP = $null
           $retries = 0
           while (-not $tsIP -and $retries -lt 12) {
@@ -75,26 +51,19 @@ jobs:
               $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
               $retries++
           }
-          
           if (-not $tsIP) {
               Write-Error "Failed to get Tailscale IP"
               exit 1
           }
-          
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-          Write-Host "Tailscale IP: $tsIP"
-      
+
       - name: Verify RDP Accessibility
         run: |
-          Write-Host "Verifying RDP connectivity..."
-          
           $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389 -WarningAction SilentlyContinue
           if (-not $testResult.TcpTestSucceeded) {
               Write-Error "RDP port 3389 not accessible"
               exit 1
           }
-          
-          Write-Host "RDP is accessible!"
 
       - name: Maintain Connection (10 Minutes)
         run: |
@@ -107,14 +76,25 @@ jobs:
           Write-Host "Duration : 10 minutes"
           Write-Host "========================================="
           Write-Host ""
-          
-          # Keep alive for 10 minutes
           $endTime = (Get-Date).AddMinutes(10)
-          
           while ((Get-Date) -lt $endTime) {
               $remaining = ($endTime - (Get-Date)).ToString("mm\:ss")
               Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP Active - Time remaining: $remaining"
               Start-Sleep -Seconds 30
           }
-          
           Write-Host "`nSession ended after 10 minutes"
+```
+---
+
+## **Setelah Diganti, Output yang Benar:**
+```
+=========================================
+         RDP ACCESS INFORMATION          
+=========================================
+Address  : 100.76.198.51
+Username : RDP
+Password : Asu112233@
+Duration : 10 minutes
+=========================================
+
+[19:44:37] RDP Active - Time remaining: 09:30
